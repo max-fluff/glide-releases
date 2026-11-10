@@ -1,6 +1,6 @@
 # Builds glide from its private source (max-fluff/glide), signs it with the
 # project's code signing certificate and publishes it here: the Windows
-# installer, the bare Windows exe and glide.app for macOS.
+# installer, the bare Windows exe and the macOS disk image with glide.app.
 #
 # Started by the source repo's scripts/release.sh after it pushes a tag:
 #   gh workflow run release.yml -R max-fluff/glide-releases -f tag=v0.2.0
@@ -166,15 +166,18 @@ jobs:
           sudo security add-trusted-cert -d -r trustRoot -p codeSign \
             -k /Library/Keychains/System.keychain assets/signing/glide-codesign.pem
           # glide.app: the agent with the File Provider that pastes and
-          # drops files from the other machine.
-          SIGN_IDENTITY="glide code signing (max-fluff)" SIGN_KEYCHAIN="$keychain" \
-            scripts/build-mac-app.sh --no-cargo
-          mkdir -p dist
-          tar -czf dist/glide-macos-arm64.tar.gz -C target/release glide.app
+          # drops files from the other machine. Then the drag-to-install
+          # disk image around it, signed too (dmgbuild lays its window out
+          # without Finder).
+          export SIGN_IDENTITY="glide code signing (max-fluff)" SIGN_KEYCHAIN="$keychain"
+          scripts/build-mac-app.sh --no-cargo
+          scripts/build-mac-dmg.sh dist/glide-macos-arm64.dmg
+          leaf=$(openssl x509 -in assets/signing/glide-codesign.pem -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')
+          codesign --verify -R="certificate leaf = H\"$leaf\"" dist/glide-macos-arm64.dmg
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: macos
-          path: dist/glide-macos-arm64.tar.gz
+          path: dist/glide-macos-arm64.dmg
           retention-days: 7
 
   release:
@@ -200,7 +203,7 @@ jobs:
           cat > notes.md <<'EOF'
           **Windows:** run `glide-setup-x64.exe`. It installs glide to Program Files, trusts the project's code signing certificate and starts glide; an update keeps settings and pairings. `glide-windows-x64.exe` is the same program without the installer.
 
-          **macOS (Apple Silicon):** `glide-macos-arm64.tar.gz` holds `glide.app`.
+          **macOS (Apple Silicon):** open `glide-macos-arm64.dmg` and drag glide to Applications; to update, quit glide (tray menu) and drag the new one over the old copy: settings, pairings and permissions stay. glide is not notarized: the first start of a copy downloaded with a browser needs System Settings → Privacy & Security → Open Anyway. Then allow glide in Accessibility and Input Monitoring there.
           EOF
-          gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.tar.gz \
+          gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "glide $TAG" --notes-file notes.md
