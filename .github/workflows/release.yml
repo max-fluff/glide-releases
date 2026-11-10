@@ -1,0 +1,206 @@
+# Builds glide from its private source (max-fluff/glide), signs it with the
+# project's code signing certificate and publishes it here: the Windows
+# installer, the bare Windows exe and glide.app for macOS.
+#
+# Started by the source repo's scripts/release.sh after it pushes a tag:
+#   gh workflow run release.yml -R max-fluff/glide-releases -f tag=v0.2.0
+# With publish=false it only builds; the files stay as run artifacts.
+#
+# This repository is public, and so is everything the workflow prints. So:
+# compiler diagnostics in the short form (no source lines), and release
+# only tags that already passed fmt, clippy and tests locally.
+#
+# Secrets, in the "release" environment (deployments from main only):
+#   GLIDE_SOURCE_KEY      read-only deploy key of max-fluff/glide
+#   SIGNING_P12_BASE64    signing key and certificate (PKCS#12, base64)
+#   SIGNING_P12_PASSWORD  its password
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag of max-fluff/glide to build, e.g. v0.2.0 (another ref builds without a version)"
+        required: true
+      publish:
+        description: "Publish the release (off: build only)"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release-${{ inputs.tag }}
+
+env:
+  CARGO_TERM_COLOR: always
+  SOURCE_REPO: max-fluff/glide
+  INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-7_1_1/innosetup-7.1.1-x64.exe
+  INNO_SHA256: 8a5a6711c3766a6e5fb74f280ba0e3551e719ce94538d901fdbd1f8f9920b3f0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.GLIDE_SOURCE_KEY }}
+          persist-credentials: false
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build (with the uiAccess manifest)
+        env:
+          GLIDE_UIACCESS: "1"
+        run: cargo build --release --locked -p glide-agent --message-format short
+      - name: Signing certificate
+        env:
+          P12: ${{ secrets.SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+        run: |
+          # Into the user's store, so signtool and Inno Setup sign by
+          # thumbprint and the password never reaches a command line.
+          $pfx = Join-Path $env:RUNNER_TEMP 'identity.p12'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:P12))
+          try {
+            $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new(
+              $pfx, $env:P12_PASSWORD, 'UserKeySet, PersistKeySet')
+          } finally {
+            Remove-Item $pfx -Force
+          }
+          $store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')
+          $store.Open('ReadWrite')
+          $store.Add($cert)
+          $store.Close()
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          "SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+      - name: Sign glide.exe
+        run: |
+          & $env:SIGNTOOL sign /sha1 $env:SIGN_THUMBPRINT /fd SHA256 `
+            /tr http://timestamp.digicert.com /td SHA256 target\release\glide.exe
+          if ($LASTEXITCODE -ne 0) { throw 'signtool failed' }
+      - name: Inno Setup
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest $env:INNO_URL -OutFile $setup
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash -ne $env:INNO_SHA256) {
+            throw 'The Inno Setup download does not match its checksum'
+          }
+          $dir = Join-Path $env:RUNNER_TEMP 'inno'
+          Start-Process $setup -Wait -ArgumentList `
+            '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', "/DIR=`"$dir`""
+          $iscc = Join-Path $dir 'ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw "No ISCC.exe in $dir" }
+          "ISCC=$iscc" >> $env:GITHUB_ENV
+      - name: Installer
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ($env:TAG -match '^v(\d+\.\d+\.\d+)$') {
+            $version = $Matches[1]
+          } else {
+            $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' |
+              Select-Object -First 1).Matches[0].Groups[1].Value
+          }
+          $sign = "/Sglide=`$q$env:SIGNTOOL`$q sign /sha1 $env:SIGN_THUMBPRINT /fd SHA256 " +
+            "/tr http://timestamp.digicert.com /td SHA256 `$f"
+          & $env:ISCC /Q /DSign $sign "/DAppVersion=$version" `
+            "/DExe=$pwd\target\release\glide.exe" "/DOutputDir=$pwd\dist" installer\windows\glide.iss
+          if ($LASTEXITCODE -ne 0) { throw 'ISCC failed' }
+          Copy-Item target\release\glide.exe dist\glide-windows-x64.exe
+          foreach ($f in Get-ChildItem dist\*.exe) {
+            $sig = Get-AuthenticodeSignature $f.FullName
+            if ($sig.SignerCertificate.Thumbprint -ne $env:SIGN_THUMBPRINT) {
+              throw "$($f.Name) is not signed by the project's certificate"
+            }
+          }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows
+          path: dist/*.exe
+          retention-days: 7
+
+  macos:
+    runs-on: macos-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.tag }}
+          ssh-key: ${{ secrets.GLIDE_SOURCE_KEY }}
+          persist-credentials: false
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build
+        run: cargo build --release --locked -p glide-agent --message-format short
+      - name: Sign
+        env:
+          P12: ${{ secrets.SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+        run: |
+          set -eu
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(openssl rand -hex 16)
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/identity.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/identity.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/identity.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # codesign wants an identity it trusts.
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign \
+            -k /Library/Keychains/System.keychain assets/signing/glide-codesign.pem
+          # glide.app: the agent with the File Provider that pastes and
+          # drops files from the other machine.
+          SIGN_IDENTITY="glide code signing (max-fluff)" SIGN_KEYCHAIN="$keychain" \
+            scripts/build-mac-app.sh --no-cargo
+          mkdir -p dist
+          tar -czf dist/glide-macos-arm64.tar.gz -C target/release glide.app
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos
+          path: dist/glide-macos-arm64.tar.gz
+          retention-days: 7
+
+  release:
+    needs: [windows, macos]
+    if: inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) echo "::error::Only v* tags are published; build others with publish off."; exit 1 ;;
+          esac
+          cat > notes.md <<'EOF'
+          **Windows:** run `glide-setup-x64.exe`. It installs glide to Program Files, trusts the project's code signing certificate and starts glide; an update keeps settings and pairings. `glide-windows-x64.exe` is the same program without the installer.
+
+          **macOS (Apple Silicon):** `glide-macos-arm64.tar.gz` holds `glide.app`.
+          EOF
+          gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "glide $TAG" --notes-file notes.md
