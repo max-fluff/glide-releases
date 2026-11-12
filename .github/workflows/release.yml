@@ -1,6 +1,7 @@
 # Builds glide from its private source (max-fluff/glide), signs it with the
 # project's code signing certificate and publishes it here: the Windows
-# installer, the bare Windows exe and the macOS disk image with glide.app.
+# installer, the bare Windows exe and the macOS disk images with glide.app,
+# for Apple silicon and for Intel (cross-compiled on the arm64 runner).
 #
 # Started by the source repo's scripts/release.sh after it pushes a tag:
 #   gh workflow run release.yml -R max-fluff/glide-releases -f tag=v0.2.0
@@ -133,6 +134,15 @@ jobs:
     environment: release
     permissions:
       contents: read
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            triple: aarch64-apple-darwin
+            asset: glide-macos-arm64.dmg
+          - arch: x86_64
+            triple: x86_64-apple-darwin
+            asset: glide-macos-x64.dmg
     steps:
       - name: Source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -142,14 +152,21 @@ jobs:
           ssh-key: ${{ secrets.GLIDE_SOURCE_KEY }}
           persist-credentials: false
       - name: Rust
-        run: rustup toolchain install stable --profile minimal && rustup default stable
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.triple }}
+          rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.arch }}
       - name: Build
-        run: cargo build --release --locked -p glide-agent --message-format short
+        run: cargo build --release --locked -p glide-agent --target ${{ matrix.triple }} --message-format short
       - name: Sign
         env:
           P12: ${{ secrets.SIGNING_P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+          ARCH: ${{ matrix.arch }}
+          TRIPLE: ${{ matrix.triple }}
+          ASSET: ${{ matrix.asset }}
         run: |
           set -eu
           keychain="$RUNNER_TEMP/signing.keychain-db"
@@ -169,15 +186,18 @@ jobs:
           # drops files from the other machine. Then the drag-to-install
           # disk image around it, signed too (dmgbuild lays its window out
           # without Finder).
+          # build-mac-app.sh looks for the runner's own architecture in
+          # target/release: the binary built for TRIPLE goes there.
           export SIGN_IDENTITY="glide code signing (max-fluff)" SIGN_KEYCHAIN="$keychain"
-          scripts/build-mac-app.sh --no-cargo
-          scripts/build-mac-dmg.sh dist/glide-macos-arm64.dmg
+          if [ "$(uname -m)" = "$ARCH" ]; then cp "target/$TRIPLE/release/glide" target/release/glide; fi
+          ARCH="$ARCH" scripts/build-mac-app.sh --no-cargo
+          scripts/build-mac-dmg.sh "dist/$ASSET"
           leaf=$(openssl x509 -in assets/signing/glide-codesign.pem -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')
-          codesign --verify -R="certificate leaf = H\"$leaf\"" dist/glide-macos-arm64.dmg
+          codesign --verify -R="certificate leaf = H\"$leaf\"" "dist/$ASSET"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: macos
-          path: dist/glide-macos-arm64.dmg
+          name: macos-${{ matrix.arch }}
+          path: dist/${{ matrix.asset }}
           retention-days: 7
 
   release:
@@ -203,7 +223,7 @@ jobs:
           cat > notes.md <<'EOF'
           **Windows:** run `glide-setup-x64.exe`. It installs glide to Program Files, trusts the project's code signing certificate and starts glide; an update keeps settings and pairings. `glide-windows-x64.exe` is the same program without the installer.
 
-          **macOS (Apple Silicon):** open `glide-macos-arm64.dmg` and drag glide to Applications; to update, quit glide (tray menu) and drag the new one over the old copy: settings, pairings and permissions stay. glide is not notarized: the first start of a copy downloaded with a browser needs System Settings → Privacy & Security → Open Anyway. Then allow glide in Accessibility and Input Monitoring there.
+          **macOS:** open `glide-macos-arm64.dmg` (Apple silicon) or `glide-macos-x64.dmg` (Intel) and drag glide to Applications; to update, quit glide (tray menu) and drag the new one over the old copy: settings, pairings and permissions stay. glide is not notarized: the first start of a copy downloaded with a browser needs System Settings → Privacy & Security → Open Anyway. Then allow glide in Accessibility and Input Monitoring there.
           EOF
-          gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.dmg \
+          gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.dmg glide-macos-x64.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "glide $TAG" --notes-file notes.md
