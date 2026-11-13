@@ -221,9 +221,11 @@ jobs:
             *) echo "::error::Only v* tags are published; build others with publish off."; exit 1 ;;
           esac
           cat > notes.md <<'EOF'
-          **Windows:** run `glide-setup-x64.exe`. It installs glide to Program Files, trusts the project's code signing certificate and starts glide; an update keeps settings and pairings. `glide-windows-x64.exe` is the same program without the installer.
+          **Windows:** run `glide-setup-x64.exe`. It installs glide to Program Files, trusts the project's code signing certificate and starts glide. `glide-windows-x64.exe` is the same program without the installer.
 
-          **macOS:** open `glide-macos-arm64.dmg` (Apple silicon) or `glide-macos-x64.dmg` (Intel) and drag glide to Applications; to update, quit glide (tray menu) and drag the new one over the old copy: settings, pairings and permissions stay. glide is not notarized: the first start of a copy downloaded with a browser needs System Settings → Privacy & Security → Open Anyway. Then allow glide in Accessibility and Input Monitoring there.
+          **macOS:** open `glide-macos-arm64.dmg` (Apple silicon) or `glide-macos-x64.dmg` (Intel) and drag glide to Applications. glide is not notarized: the first start of a copy downloaded with a browser needs System Settings → Privacy & Security → Open Anyway. Then allow glide in Accessibility and Input Monitoring there.
+
+          **Updates:** a running glide finds a new release by itself and installs it with Update now in its window (General, Updates). Settings, pairings and macOS permissions stay. By hand: run the new installer on Windows; on macOS quit glide (tray menu) and drag the new copy over the old one.
           EOF
           gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.dmg glide-macos-x64.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "glide $TAG" --notes-file notes.md

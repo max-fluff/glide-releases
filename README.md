@@ -61,7 +61,7 @@ To paste or drop files from another machine on the Mac, turn on glide in System 
 
    <img src="docs/images/screens.png" width="720" alt="Screens page: a Windows PC with two monitors and a MacBook below them, joined by two portals">
 
-glide doesn't find machines over a VPN by itself. Add the other machine's address to the config file, which you can open from General > Config file.
+If the other machine isn't in the list, for example over a VPN, type its IP address or name under Not in the list? on the Machines page and click Pair. Keep the Machines page open on the other machine too.
 
 ## Keyboard
 
@@ -85,6 +85,7 @@ glide doesn't use accounts or outside servers. The machines connect to each othe
 
 - On Windows, glide doesn't work on the lock screen, in UAC prompts or on the Ctrl+Alt+Del screen.
 - On the Mac, glide can't tell when a game is running. Use the game mode hotkey.
+- On the Mac, the cursor stays on the Mac while Secure Input is on: a password field has focus, or Secure Keyboard Entry is turned on in Terminal. The glide window says so.
 
 ## Troubleshooting
 
