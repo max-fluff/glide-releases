@@ -227,5 +227,10 @@ jobs:
 
           **Updates:** a running glide finds a new release by itself and installs it with Update now in its window (General, Updates). Settings, pairings and macOS permissions stay. By hand: run the new installer on Windows; on macOS quit glide (tray menu) and drag the new copy over the old one.
           EOF
+          {
+            printf '\n**SHA-256:**\n\n```\n'
+            sha256sum glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.dmg glide-macos-x64.dmg
+            printf '```\n'
+          } >> notes.md
           gh release create "$TAG" glide-setup-x64.exe glide-windows-x64.exe glide-macos-arm64.dmg glide-macos-x64.dmg \
             --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "glide $TAG" --notes-file notes.md

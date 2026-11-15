@@ -92,3 +92,15 @@ glide doesn't use accounts or outside servers. The machines connect to each othe
 - If the machines don't see each other, check that they are on the same network and that the Windows network is set to private.
 - If the cursor doesn't cross, look under the layout on the Screens page. It says what holds the cursor: a cursor lock, game mode or a full screen app.
 - The Log page in the window shows what glide did. The file `glide.log` is in `%APPDATA%\glide` on Windows and in `~/Library/Application Support/glide` on the Mac.
+
+## Reporting a problem
+
+Open an [issue](https://github.com/max-fluff/glide-releases/issues/new/choose) and attach the part of `glide.log` from around the time it happened. The log can contain machine names and IP addresses, so remove anything you don't want to make public.
+
+## Checking a download
+
+Each release lists the SHA-256 of its files. To compare, run `Get-FileHash glide-setup-x64.exe` in PowerShell on Windows, or `shasum -a 256 glide-macos-arm64.dmg` in Terminal on the Mac.
+
+## License
+
+glide is free to use and closed source. Redistributing, modifying and reverse engineering it are not allowed. See [LICENSE](LICENSE).

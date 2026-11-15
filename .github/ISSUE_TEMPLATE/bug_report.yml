@@ -1,0 +1,59 @@
+name: Bug report
+description: Something in glide doesn't work
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting. Please check first that every machine runs the latest version of glide.
+  - type: input
+    id: version
+    attributes:
+      label: glide version
+      description: The version you installed, from the release page or the glide window.
+      placeholder: "0.2.2"
+    validations:
+      required: true
+  - type: textarea
+    id: machines
+    attributes:
+      label: Machines
+      description: Each machine with its system and version, and which one the keyboard and mouse are attached to.
+      placeholder: |
+        MacBook Air M2, macOS 15.1, keyboard and mouse attached
+        Desktop PC, Windows 11 24H2
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: How the machines are connected
+      options:
+        - Same local network
+        - VPN
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: >-
+        The part of glide.log from around the time of the problem, from the machine where it happened.
+        It is in %APPDATA%\glide on Windows and in ~/Library/Application Support/glide on the Mac.
+        The log can contain machine names and IP addresses, so remove anything you don't want to make public.
+      render: text
